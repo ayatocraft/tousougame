@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>逃走中 Nexis Engine</title>
+<script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
+
+<style>
+body {
+  margin:0;
+  font-family: -apple-system, BlinkMacSystemFont;
+  background:#0b0b0f;
+  color:white;
+  text-align:center;
+}
+
+/* 起動画面 */
+#boot {
+  position:fixed;
+  inset:0;
+  background:black;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  flex-direction:column;
+  z-index:9999;
+}
+
+#boot h1 {
+  color:red;
+  font-size:50px;
+  animation: flash 1s infinite alternate;
+}
+
+#boot p {
+  opacity:0;
+  animation: fadeIn 2s 2s forwards;
+}
+
+@keyframes flash {
+  from {opacity:0.3;}
+  to {opacity:1;}
+}
+
+@keyframes fadeIn {
+  to {opacity:1;}
+}
+
+/* Nexis UI */
+.card {
+  background:rgba(255,255,255,0.05);
+  backdrop-filter: blur(10px);
+  border-radius:15px;
+  padding:15px;
+  margin:10px;
+}
+
+button {
+  padding:12px;
+  margin:5px;
+  border:none;
+  border-radius:10px;
+  background:#1f1f2e;
+  color:white;
+}
+
+input {
+  padding:10px;
+  border-radius:10px;
+  border:none;
+  background:#1a1a25;
+  color:white;
+}
+
+#log {
+  height:150px;
+  overflow:auto;
+  text-align:left;
+}
+
+/* 強調 */
+.timer {
+  font-size:32px;
+}
+.count {
+  font-size:20px;
+}
+</style>
+</head>
+<body>
+
+<!-- 起動画面 -->
+<div id="boot">
+  <h1>逃走中</h1>
+  <p>Nexis Engine 起動中...</p>
+</div>
+
+<div id="app" style="display:none;">
+
+<h2>モード選択</h2>
+<button onclick="setMode('host')">ホスト</button>
+<button onclick="setMode('player')">参加者</button>
+
+<div class="card">
+  <div class="timer" id="timer">--:--</div>
+  <div class="count" id="count">残り人数: 0</div>
+</div>
+
+<div class="card" id="log"></div>
+
+<!-- 名前入力 -->
+<div class="card" id="nameBox" style="display:none;">
+  <input id="nameInput" placeholder="名前を入力">
+  <button onclick="setName()">決定</button>
+</div>
+
+<!-- ホスト -->
+<div class="card" id="hostUI" style="display:none;">
+  <input id="timeInput" type="number" placeholder="秒数">
+  <button onclick="startGame()">開始</button>
+  <button onclick="resetGame()">リセット</button>
+
+  <br><br>
+
+  <input id="missionInput" placeholder="ミッション">
+  <button onclick="sendMission()">送信</button>
+
+  <br>
+
+  <input id="noticeInput" placeholder="お知らせ">
+  <button onclick="sendNotice()">送信</button>
+</div>
+
+<!-- プレイヤー -->
+<div class="card" id="playerUI" style="display:none;">
+  <button onclick="capture()">確保</button>
+  <button onclick="revive()">復活</button>
+</div>
+
+</div>
+
+<script>
+/* 起動演出 */
+setTimeout(()=>{
+  document.getElementById("boot").style.display="none";
+  document.getElementById("app").style.display="block";
+},4000);
+
+/* Ably */
+const ably = new Ably.Realtime("YOUR_ABLY_API_KEY");
+const channel = ably.channels.get("tosochu-nexis");
+
+/* 状態 */
+let mode="";
+let timer=0;
+let interval;
+let players={};
+let myId="p"+Math.floor(Math.random()*10000);
+let myName="";
+
+/* モード */
+function setMode(m){
+  mode=m;
+
+  if(m==="player"){
+    document.getElementById("nameBox").style.display="block";
+  }
+
+  document.getElementById("hostUI").style.display=m==="host"?"block":"none";
+  document.getElementById("playerUI").style.display=m==="player"?"block":"none";
+}
+
+/* 名前設定 */
+function setName(){
+  myName=document.getElementById("nameInput").value || myId;
+  players[myId]={alive:true,name:myName};
+  sendState();
+  updateCount();
+  addLog("参加: "+myName);
+}
+
+/* タイマー */
+function startGame(){
+  timer=parseInt(timeInput.value);
+  interval=setInterval(tick,1000);
+}
+
+function tick(){
+  if(timer<=0){
+    clearInterval(interval);
+    broadcast({type:"end",players});
+    showResult();
+    return;
+  }
+  timer--;
+  updateTimer();
+  broadcast({type:"timer",timer});
+}
+
+function updateTimer(){
+  let m=Math.floor(timer/60);
+  let s=timer%60;
+  timerEl.innerText=`${m}:${s.toString().padStart(2,'0')}`;
+}
+
+/* ホスト操作 */
+function sendMission(){
+  let t=missionInput.value;
+  broadcast({type:"mission",text:t});
+  addLog("📢 "+t);
+}
+
+function sendNotice(){
+  let t=noticeInput.value;
+  broadcast({type:"notice",text:t});
+  addLog("🔔 "+t);
+}
+
+function resetGame(){
+  players={};
+  timer=0;
+  broadcast({type:"reset"});
+}
+
+/* プレイヤー */
+function capture(){
+  players[myId].alive=false;
+  sendState();
+}
+
+function revive(){
+  players[myId].alive=true;
+  sendState();
+}
+
+/* 人数 */
+function updateCount(){
+  let alive=Object.values(players).filter(p=>p.alive).length;
+  count.innerText="残り人数: "+alive;
+}
+
+/* 通信 */
+function sendState(){
+  broadcast({type:"players",players});
+}
+
+function broadcast(data){
+  channel.publish("update",data);
+}
+
+/* 受信 */
+channel.subscribe("update",msg=>{
+  let d=msg.data;
+
+  if(d.type==="timer"){ timer=d.timer; updateTimer(); }
+  if(d.type==="mission"){ addLog("📢 "+d.text); }
+  if(d.type==="notice"){ addLog("🔔 "+d.text); }
+
+  if(d.type==="players"){
+    players=d.players;
+    updateCount();
+  }
+
+  if(d.type==="reset"){
+    players={};
+    log.innerHTML="";
+    updateCount();
+  }
+
+  if(d.type==="end"){
+    players=d.players;
+    showResult();
+  }
+});
+
+/* ログ */
+function addLog(t){
+  log.innerHTML += "<div>"+t+"</div>";
+  log.scrollTop=log.scrollHeight;
+}
+
+/* リザルト */
+function showResult(){
+  let winners=Object.values(players)
+    .filter(p=>p.alive)
+    .map(p=>p.name);
+
+  addLog("🏆逃走成功: "+(winners.join(", ")||"なし"));
+}
+</script>
+
+</body>
+</html>
