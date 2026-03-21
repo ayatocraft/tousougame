@@ -2,38 +2,21 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>逃走中 Nexis 完全版</title>
+<title>逃走中 Nexis ルーム制</title>
 <script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
 
 <style>
-body{
-  font-family:sans-serif;
-  background:#111;
-  color:white;
-  text-align:center;
-}
-#status{
-  position:fixed;
-  top:10px;
-  right:10px;
-  padding:8px;
-  border-radius:8px;
-}
+body{font-family:sans-serif;background:#111;color:white;text-align:center;}
+#log{height:180px;overflow:auto;border:1px solid #555;text-align:left;}
+button,input{padding:10px;margin:5px;}
+#status{position:fixed;top:10px;right:10px;padding:8px;border-radius:8px;}
 .connected{background:green;}
 .disconnected{background:red;}
-#log{
-  height:180px;
-  overflow:auto;
-  border:1px solid #555;
-  text-align:left;
-}
-button{padding:10px;margin:5px;}
-input{padding:8px;margin:5px;}
 </style>
 </head>
 <body>
 
-<h2 id="status">接続中...</h2>
+<h2 id="status">未接続</h2>
 
 <h1 id="timer">--:--</h1>
 <h3 id="count">残り人数: 0</h3>
@@ -42,9 +25,18 @@ input{padding:8px;margin:5px;}
 
 <hr>
 
-<button onclick="setMode('host')">ホスト</button>
-<button onclick="setMode('player')">参加者</button>
+<!-- モード -->
+<button onclick="createRoom()">ホスト（部屋作成）</button>
+<button onclick="joinUI()">参加者（入室）</button>
 
+<div id="roomBox" style="display:none;">
+  <input id="roomInput" placeholder="ルームコード">
+  <button onclick="joinRoom()">入室</button>
+</div>
+
+<div id="roomDisplay"></div>
+
+<!-- 名前 -->
 <div id="nameBox" style="display:none;">
   <input id="nameInput" placeholder="名前">
   <button onclick="setName()">決定</button>
@@ -56,19 +48,8 @@ input{padding:8px;margin:5px;}
   <button onclick="startGame()">開始</button>
 
   <br><br>
-
-  <input id="logInput" placeholder="ログ入力">
+  <input id="logInput" placeholder="ログ">
   <button onclick="sendLog()">送信</button>
-
-  <br>
-
-  <input id="missionInput" placeholder="ミッション">
-  <button onclick="sendMission()">送信</button>
-
-  <br>
-
-  <input id="noticeInput" placeholder="お知らせ">
-  <button onclick="sendNotice()">送信</button>
 </div>
 
 <!-- プレイヤー -->
@@ -78,36 +59,83 @@ input{padding:8px;margin:5px;}
 </div>
 
 <script>
-// APIキー
+// API
 const ably = new Ably.Realtime("JW3Hvw.fw1o0A:-zV3VatQkBUx-hVmtwFGE6Bwbv_wG4kIoz7LHOKNawY");
-const channel = ably.channels.get("tosochu-final");
 
-// 接続状態
-ably.connection.on(state=>{
-  let el=document.getElementById("status");
-  if(state.current==="connected"){
-    el.innerText="接続OK";
-    el.className="connected";
-  }else{
-    el.innerText="切断";
-    el.className="disconnected";
-  }
-});
-
-// 状態
+let channel;
+let roomCode="";
 let players={};
 let myId="p"+Math.random();
 let myName="";
 let timer=0;
 let interval;
-let mode="";
 
-// モード
-function setMode(m){
-  mode=m;
-  hostUI.style.display=m==="host"?"block":"none";
-  playerUI.style.display=m==="player"?"block":"none";
-  if(m==="player") nameBox.style.display="block";
+// 接続状態
+ably.connection.on(s=>{
+  status.innerText = s.current==="connected"?"接続OK":"切断";
+  status.className = s.current==="connected"?"connected":"disconnected";
+});
+
+// 🔑 ランダムコード生成
+function generateCode(){
+  return Math.random().toString(36).substring(2,7).toUpperCase();
+}
+
+// ホスト
+function createRoom(){
+  roomCode = generateCode();
+  connectRoom();
+  roomDisplay.innerHTML = "ルームコード: <b>"+roomCode+"</b>";
+  hostUI.style.display="block";
+}
+
+// 参加UI
+function joinUI(){
+  roomBox.style.display="block";
+}
+
+// 入室
+function joinRoom(){
+  roomCode = roomInput.value.toUpperCase();
+  connectRoom();
+}
+
+// 接続
+function connectRoom(){
+  channel = ably.channels.get("tosochu-"+roomCode);
+
+  channel.subscribe("update",msg=>{
+    let d=msg.data;
+
+    if(d.type==="timer"){
+      timer=d.timer;
+      updateTimer();
+    }
+
+    if(d.type==="players"){
+      players=d.players;
+      updateCount();
+    }
+
+    if(d.type==="log"){
+      addLog("💬 "+d.text);
+    }
+
+    if(d.type==="capture"){
+      addLog("🚨確保: "+d.name);
+    }
+
+    if(d.type==="revive"){
+      addLog("✨復活: "+d.name);
+    }
+
+    if(d.type==="end"){
+      showResult(d.players);
+    }
+  });
+
+  nameBox.style.display="block";
+  playerUI.style.display="block";
 }
 
 // 名前
@@ -115,7 +143,7 @@ function setName(){
   myName=nameInput.value||myId;
   players[myId]={alive:true,name:myName};
   sendState();
-  addLog("🟢参加: "+myName);
+  addLog("参加: "+myName);
 }
 
 // タイマー
@@ -124,11 +152,11 @@ function startGame(){
   interval=setInterval(()=>{
     timer--;
     updateTimer();
-    broadcast({type:"timer",timer});
+    send({type:"timer",timer});
 
     if(timer<=0){
       clearInterval(interval);
-      broadcast({type:"end",players});
+      send({type:"end",players});
     }
   },1000);
 }
@@ -136,92 +164,37 @@ function startGame(){
 function updateTimer(){
   let m=Math.floor(timer/60);
   let s=timer%60;
-  timerEl=document.getElementById("timer");
   timerEl.innerText=m+":"+String(s).padStart(2,"0");
-}
-
-// ホスト操作
-function sendLog(){
-  let t=logInput.value;
-  if(!t) return;
-  broadcast({type:"log",text:t});
-  logInput.value="";
-}
-
-function sendMission(){
-  let t=missionInput.value;
-  broadcast({type:"mission",text:t});
-}
-
-function sendNotice(){
-  let t=noticeInput.value;
-  broadcast({type:"notice",text:t});
 }
 
 // プレイヤー
 function capture(){
-  if(players[myId]){
-    players[myId].alive=false;
-    broadcast({type:"capture",name:myName});
-    sendState();
-  }
+  players[myId].alive=false;
+  send({type:"capture",name:myName});
+  sendState();
 }
 
 function revive(){
-  if(players[myId]){
-    players[myId].alive=true;
-    broadcast({type:"revive",name:myName});
-    sendState();
-  }
+  players[myId].alive=true;
+  send({type:"revive",name:myName});
+  sendState();
+}
+
+// ログ
+function sendLog(){
+  let t=logInput.value;
+  if(!t) return;
+  send({type:"log",text:t});
+  logInput.value="";
 }
 
 // 通信
 function sendState(){
-  broadcast({type:"players",players});
+  send({type:"players",players});
 }
-function broadcast(d){
+function send(d){
   channel.publish("update",d);
 }
-
-// 受信
-channel.subscribe("update",msg=>{
-  let d=msg.data;
-
-  if(d.type==="timer"){
-    timer=d.timer;
-    updateTimer();
-  }
-
-  if(d.type==="players"){
-    players=d.players;
-    updateCount();
-  }
-
-  if(d.type==="log"){
-    addLog("💬 "+d.text);
-  }
-
-  if(d.type==="mission"){
-    addLog("📢 "+d.text);
-  }
-
-  if(d.type==="notice"){
-    addLog("🔔 "+d.text);
-  }
-
-  if(d.type==="capture"){
-    addLog("🚨確保: "+d.name);
-  }
-
-  if(d.type==="revive"){
-    addLog("✨復活: "+d.name);
-  }
-
-  if(d.type==="end"){
-    players=d.players;
-    showResult();
-  }
-});
 
 // 人数
 function updateCount(){
@@ -229,18 +202,15 @@ function updateCount(){
   count.innerText="残り人数: "+alive;
 }
 
-// ログ
+// ログ表示
 function addLog(t){
   log.innerHTML+="<div>"+t+"</div>";
   log.scrollTop=log.scrollHeight;
 }
 
 // 結果
-function showResult(){
-  let w=Object.values(players)
-    .filter(p=>p.alive)
-    .map(p=>p.name);
-
+function showResult(p){
+  let w=Object.values(p).filter(x=>x.alive).map(x=>x.name);
   addLog("🏆逃走成功: "+(w.join(", ")||"なし"));
 }
 </script>
