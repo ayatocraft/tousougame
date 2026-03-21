@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>逃走中 Nexis</title>
+<title>逃走中 Nexis 完全版</title>
 <script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
 
 <style>
@@ -22,11 +22,13 @@ body{
 .connected{background:green;}
 .disconnected{background:red;}
 #log{
-  height:150px;
+  height:180px;
   overflow:auto;
   border:1px solid #555;
+  text-align:left;
 }
 button{padding:10px;margin:5px;}
+input{padding:8px;margin:5px;}
 </style>
 </head>
 <body>
@@ -48,24 +50,41 @@ button{padding:10px;margin:5px;}
   <button onclick="setName()">決定</button>
 </div>
 
+<!-- ホスト -->
 <div id="hostUI" style="display:none;">
   <input id="timeInput" type="number" placeholder="秒">
   <button onclick="startGame()">開始</button>
+
+  <br><br>
+
+  <input id="logInput" placeholder="ログ入力">
+  <button onclick="sendLog()">送信</button>
+
+  <br>
+
+  <input id="missionInput" placeholder="ミッション">
+  <button onclick="sendMission()">送信</button>
+
+  <br>
+
+  <input id="noticeInput" placeholder="お知らせ">
+  <button onclick="sendNotice()">送信</button>
 </div>
 
+<!-- プレイヤー -->
 <div id="playerUI" style="display:none;">
   <button onclick="capture()">確保</button>
   <button onclick="revive()">復活</button>
 </div>
 
 <script>
-// ★あなたのAPIキー
+// APIキー
 const ably = new Ably.Realtime("JW3Hvw.fw1o0A:-zV3VatQkBUx-hVmtwFGE6Bwbv_wG4kIoz7LHOKNawY");
-const channel = ably.channels.get("tosochu");
+const channel = ably.channels.get("tosochu-final");
 
 // 接続状態
 ably.connection.on(state=>{
-  let el = document.getElementById("status");
+  let el=document.getElementById("status");
   if(state.current==="connected"){
     el.innerText="接続OK";
     el.className="connected";
@@ -76,8 +95,8 @@ ably.connection.on(state=>{
 });
 
 // 状態
-let players = {};
-let myId = "p"+Math.random();
+let players={};
+let myId="p"+Math.random();
 let myName="";
 let timer=0;
 let interval;
@@ -86,26 +105,23 @@ let mode="";
 // モード
 function setMode(m){
   mode=m;
-  document.getElementById("hostUI").style.display = m==="host"?"block":"none";
-  document.getElementById("playerUI").style.display = m==="player"?"block":"none";
-
-  if(m==="player"){
-    document.getElementById("nameBox").style.display="block";
-  }
+  hostUI.style.display=m==="host"?"block":"none";
+  playerUI.style.display=m==="player"?"block":"none";
+  if(m==="player") nameBox.style.display="block";
 }
 
 // 名前
 function setName(){
-  myName = document.getElementById("nameInput").value || myId;
-  players[myId] = {alive:true,name:myName};
+  myName=nameInput.value||myId;
+  players[myId]={alive:true,name:myName};
   sendState();
-  log("参加: "+myName);
+  addLog("🟢参加: "+myName);
 }
 
 // タイマー
 function startGame(){
-  timer = parseInt(document.getElementById("timeInput").value) || 60;
-  interval = setInterval(()=>{
+  timer=parseInt(timeInput.value)||60;
+  interval=setInterval(()=>{
     timer--;
     updateTimer();
     broadcast({type:"timer",timer});
@@ -120,14 +136,33 @@ function startGame(){
 function updateTimer(){
   let m=Math.floor(timer/60);
   let s=timer%60;
-  document.getElementById("timer").innerText =
-    m+":"+String(s).padStart(2,"0");
+  timerEl=document.getElementById("timer");
+  timerEl.innerText=m+":"+String(s).padStart(2,"0");
+}
+
+// ホスト操作
+function sendLog(){
+  let t=logInput.value;
+  if(!t) return;
+  broadcast({type:"log",text:t});
+  logInput.value="";
+}
+
+function sendMission(){
+  let t=missionInput.value;
+  broadcast({type:"mission",text:t});
+}
+
+function sendNotice(){
+  let t=noticeInput.value;
+  broadcast({type:"notice",text:t});
 }
 
 // プレイヤー
 function capture(){
   if(players[myId]){
     players[myId].alive=false;
+    broadcast({type:"capture",name:myName});
     sendState();
   }
 }
@@ -135,6 +170,7 @@ function capture(){
 function revive(){
   if(players[myId]){
     players[myId].alive=true;
+    broadcast({type:"revive",name:myName});
     sendState();
   }
 }
@@ -143,14 +179,13 @@ function revive(){
 function sendState(){
   broadcast({type:"players",players});
 }
-
 function broadcast(d){
   channel.publish("update",d);
 }
 
 // 受信
 channel.subscribe("update",msg=>{
-  let d = msg.data;
+  let d=msg.data;
 
   if(d.type==="timer"){
     timer=d.timer;
@@ -162,6 +197,26 @@ channel.subscribe("update",msg=>{
     updateCount();
   }
 
+  if(d.type==="log"){
+    addLog("💬 "+d.text);
+  }
+
+  if(d.type==="mission"){
+    addLog("📢 "+d.text);
+  }
+
+  if(d.type==="notice"){
+    addLog("🔔 "+d.text);
+  }
+
+  if(d.type==="capture"){
+    addLog("🚨確保: "+d.name);
+  }
+
+  if(d.type==="revive"){
+    addLog("✨復活: "+d.name);
+  }
+
   if(d.type==="end"){
     players=d.players;
     showResult();
@@ -170,24 +225,23 @@ channel.subscribe("update",msg=>{
 
 // 人数
 function updateCount(){
-  let alive = Object.values(players).filter(p=>p.alive).length;
-  document.getElementById("count").innerText =
-    "残り人数: "+alive;
+  let alive=Object.values(players).filter(p=>p.alive).length;
+  count.innerText="残り人数: "+alive;
 }
 
 // ログ
-function log(t){
-  let el = document.getElementById("log");
-  el.innerHTML += "<div>"+t+"</div>";
+function addLog(t){
+  log.innerHTML+="<div>"+t+"</div>";
+  log.scrollTop=log.scrollHeight;
 }
 
 // 結果
 function showResult(){
-  let w = Object.values(players)
+  let w=Object.values(players)
     .filter(p=>p.alive)
     .map(p=>p.name);
 
-  log("🏆逃走成功: "+(w.join(", ")||"なし"));
+  addLog("🏆逃走成功: "+(w.join(", ")||"なし"));
 }
 </script>
 
