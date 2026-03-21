@@ -8,7 +8,7 @@
 <style>
 body {
   margin:0;
-  font-family: -apple-system, BlinkMacSystemFont;
+  font-family:-apple-system;
   background:#0b0b0f;
   color:white;
   text-align:center;
@@ -23,41 +23,51 @@ body {
   justify-content:center;
   align-items:center;
   flex-direction:column;
-  z-index:9999;
 }
-
 #boot h1 {
   color:red;
   font-size:50px;
-  animation: flash 1s infinite alternate;
+  animation:flash 1s infinite alternate;
 }
-
 #boot p {
   opacity:0;
-  animation: fadeIn 2s 2s forwards;
+  animation:fade 2s 2s forwards;
 }
-
-@keyframes flash {
-  from {opacity:0.3;}
-  to {opacity:1;}
-}
-
-@keyframes fadeIn {
-  to {opacity:1;}
-}
+@keyframes flash {from{opacity:0.3;}to{opacity:1;}}
+@keyframes fade {to{opacity:1;}}
 
 /* Nexis UI */
 .card {
   background:rgba(255,255,255,0.05);
-  backdrop-filter: blur(10px);
+  backdrop-filter:blur(12px);
   border-radius:15px;
   padding:15px;
   margin:10px;
 }
 
+/* ステータス */
+#status {
+  position:fixed;
+  top:10px;
+  right:10px;
+  padding:8px 12px;
+  border-radius:10px;
+  font-size:12px;
+}
+.connected { background:#0f0; color:#000; }
+.disconnected { background:#f00; }
+.connecting { background:#ffaa00; }
+
+/* ログ */
+#log {
+  height:150px;
+  overflow:auto;
+  text-align:left;
+}
+
+/* ボタン */
 button {
-  padding:12px;
-  margin:5px;
+  padding:10px;
   border:none;
   border-radius:10px;
   background:#1f1f2e;
@@ -71,29 +81,16 @@ input {
   background:#1a1a25;
   color:white;
 }
-
-#log {
-  height:150px;
-  overflow:auto;
-  text-align:left;
-}
-
-/* 強調 */
-.timer {
-  font-size:32px;
-}
-.count {
-  font-size:20px;
-}
 </style>
 </head>
 <body>
 
-<!-- 起動画面 -->
 <div id="boot">
   <h1>逃走中</h1>
   <p>Nexis Engine 起動中...</p>
 </div>
+
+<div id="status" class="connecting">接続中...</div>
 
 <div id="app" style="display:none;">
 
@@ -102,31 +99,29 @@ input {
 <button onclick="setMode('player')">参加者</button>
 
 <div class="card">
-  <div class="timer" id="timer">--:--</div>
-  <div class="count" id="count">残り人数: 0</div>
+  <h1 id="timer">--:--</h1>
+  <h3 id="count">残り人数: 0</h3>
 </div>
 
 <div class="card" id="log"></div>
 
-<!-- 名前入力 -->
+<button onclick="requestNotification()">通知ON</button>
+
+<!-- 名前 -->
 <div class="card" id="nameBox" style="display:none;">
-  <input id="nameInput" placeholder="名前を入力">
+  <input id="nameInput" placeholder="名前">
   <button onclick="setName()">決定</button>
 </div>
 
 <!-- ホスト -->
 <div class="card" id="hostUI" style="display:none;">
-  <input id="timeInput" type="number" placeholder="秒数">
+  <input id="timeInput" type="number" placeholder="秒">
   <button onclick="startGame()">開始</button>
   <button onclick="resetGame()">リセット</button>
-
   <br><br>
-
   <input id="missionInput" placeholder="ミッション">
   <button onclick="sendMission()">送信</button>
-
   <br>
-
   <input id="noticeInput" placeholder="お知らせ">
   <button onclick="sendNotice()">送信</button>
 </div>
@@ -140,42 +135,51 @@ input {
 </div>
 
 <script>
-/* 起動演出 */
+/* 起動 */
 setTimeout(()=>{
-  document.getElementById("boot").style.display="none";
-  document.getElementById("app").style.display="block";
-},4000);
+  boot.style.display="none";
+  app.style.display="block";
+},3500);
 
 /* Ably */
 const ably = new Ably.Realtime("YOUR_ABLY_API_KEY");
 const channel = ably.channels.get("tosochu-nexis");
 
+/* 接続状態UI */
+ably.connection.on(state=>{
+  let s = state.current;
+  status.className="";
+  if(s==="connected"){
+    status.innerText="接続中";
+    status.classList.add("connected");
+    addLog("🟢 接続完了");
+  }else if(s==="connecting"){
+    status.innerText="接続中...";
+    status.classList.add("connecting");
+  }else{
+    status.innerText="切断";
+    status.classList.add("disconnected");
+    addLog("🔴 切断");
+  }
+});
+
 /* 状態 */
-let mode="";
-let timer=0;
-let interval;
-let players={};
-let myId="p"+Math.floor(Math.random()*10000);
-let myName="";
+let mode="", timer=0, interval;
+let players={}, myId="p"+Math.random(), myName="";
 
 /* モード */
 function setMode(m){
   mode=m;
-
-  if(m==="player"){
-    document.getElementById("nameBox").style.display="block";
-  }
-
-  document.getElementById("hostUI").style.display=m==="host"?"block":"none";
-  document.getElementById("playerUI").style.display=m==="player"?"block":"none";
+  hostUI.style.display=m==="host"?"block":"none";
+  playerUI.style.display=m==="player"?"block":"none";
+  if(m==="player") nameBox.style.display="block";
 }
 
-/* 名前設定 */
+/* 名前 */
 function setName(){
-  myName=document.getElementById("nameInput").value || myId;
+  myName=nameInput.value||myId;
   players[myId]={alive:true,name:myName};
   sendState();
-  updateCount();
   addLog("参加: "+myName);
 }
 
@@ -184,54 +188,38 @@ function startGame(){
   timer=parseInt(timeInput.value);
   interval=setInterval(tick,1000);
 }
-
 function tick(){
   if(timer<=0){
     clearInterval(interval);
     broadcast({type:"end",players});
-    showResult();
+    notify("終了","ゲーム終了");
     return;
   }
   timer--;
   updateTimer();
   broadcast({type:"timer",timer});
 }
-
 function updateTimer(){
   let m=Math.floor(timer/60);
   let s=timer%60;
   timerEl.innerText=`${m}:${s.toString().padStart(2,'0')}`;
 }
 
-/* ホスト操作 */
+/* 操作 */
 function sendMission(){
-  let t=missionInput.value;
-  broadcast({type:"mission",text:t});
-  addLog("📢 "+t);
+  broadcast({type:"mission",text:missionInput.value});
 }
-
 function sendNotice(){
-  let t=noticeInput.value;
-  broadcast({type:"notice",text:t});
-  addLog("🔔 "+t);
+  broadcast({type:"notice",text:noticeInput.value});
 }
-
 function resetGame(){
   players={};
-  timer=0;
   broadcast({type:"reset"});
 }
 
 /* プレイヤー */
-function capture(){
-  players[myId].alive=false;
-  sendState();
-}
-
-function revive(){
-  players[myId].alive=true;
-  sendState();
-}
+function capture(){ players[myId].alive=false; sendState(); }
+function revive(){ players[myId].alive=true; sendState(); }
 
 /* 人数 */
 function updateCount(){
@@ -240,21 +228,25 @@ function updateCount(){
 }
 
 /* 通信 */
-function sendState(){
-  broadcast({type:"players",players});
-}
-
-function broadcast(data){
-  channel.publish("update",data);
-}
+function sendState(){ broadcast({type:"players",players}); }
+function broadcast(d){ channel.publish("update",d); }
 
 /* 受信 */
 channel.subscribe("update",msg=>{
   let d=msg.data;
 
   if(d.type==="timer"){ timer=d.timer; updateTimer(); }
-  if(d.type==="mission"){ addLog("📢 "+d.text); }
-  if(d.type==="notice"){ addLog("🔔 "+d.text); }
+
+  if(d.type==="mission"){
+    addLog("📢 "+d.text);
+    notify("ミッション",d.text);
+    vibrate();
+  }
+
+  if(d.type==="notice"){
+    addLog("🔔 "+d.text);
+    notify("お知らせ",d.text);
+  }
 
   if(d.type==="players"){
     players=d.players;
@@ -264,28 +256,40 @@ channel.subscribe("update",msg=>{
   if(d.type==="reset"){
     players={};
     log.innerHTML="";
-    updateCount();
   }
 
   if(d.type==="end"){
     players=d.players;
     showResult();
+    notify("終了","逃走中終了");
   }
 });
 
 /* ログ */
 function addLog(t){
-  log.innerHTML += "<div>"+t+"</div>";
+  log.innerHTML+="<div>"+t+"</div>";
   log.scrollTop=log.scrollHeight;
 }
 
-/* リザルト */
+/* 結果 */
 function showResult(){
-  let winners=Object.values(players)
-    .filter(p=>p.alive)
-    .map(p=>p.name);
+  let w=Object.values(players).filter(p=>p.alive).map(p=>p.name);
+  addLog("🏆逃走成功: "+(w.join(", ")||"なし"));
+}
 
-  addLog("🏆逃走成功: "+(winners.join(", ")||"なし"));
+/* 通知 */
+function requestNotification(){
+  Notification.requestPermission();
+}
+function notify(t,b){
+  if(Notification.permission==="granted"){
+    new Notification(t,{body:b});
+  }
+}
+
+/* バイブ */
+function vibrate(){
+  if(navigator.vibrate) navigator.vibrate([200,100,200]);
 }
 </script>
 
