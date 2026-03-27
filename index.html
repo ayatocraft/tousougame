@@ -3,59 +3,19 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nexis Escape v2</title>
+<title>Nexis Escape FINAL</title>
 <script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
 
 <style>
-body{
-  margin:0;
-  font-family:-apple-system;
-  background:#0f172a;
-  color:white;
-}
-
-/* Nexisカード */
-.card{
-  background:#1e293b;
-  border-radius:16px;
-  padding:15px;
-  margin:10px;
-}
-
-/* センター */
-.center{
-  display:flex;
-  justify-content:center;
-  align-items:center;
-  height:100vh;
-  flex-direction:column;
-}
-
-/* UI */
-button{
-  background:#3b82f6;
-  border:none;
-  padding:10px;
-  border-radius:10px;
-  color:white;
-}
-input{
-  padding:10px;
-  border-radius:10px;
-  border:none;
-}
-
-#timer{ font-size:50px; }
-
-/* プレイヤー */
-.player{
-  display:flex;
-  justify-content:space-between;
-  padding:5px;
-  border-bottom:1px solid #333;
-}
-.alive{color:#22c55e;}
-.dead{color:#ef4444;}
+body{margin:0;font-family:-apple-system;background:#0f172a;color:white;}
+.center{display:flex;justify-content:center;align-items:center;height:100vh;flex-direction:column;}
+.card{background:#1e293b;border-radius:16px;padding:15px;margin:10px;}
+button{background:#3b82f6;border:none;padding:10px;border-radius:10px;color:white;}
+input{padding:10px;border-radius:10px;border:none;}
+#timer{font-size:60px;}
+.player{display:flex;justify-content:space-between;border-bottom:1px solid #333;padding:5px;}
+.alive{color:#22c55e;} .dead{color:#ef4444;}
+#log{height:120px;overflow:auto;font-size:13px;}
 </style>
 </head>
 
@@ -63,13 +23,13 @@ input{
 
 <!-- 起動 -->
 <div id="start" class="center">
-  <h1>🏃 Nexis Escape</h1>
+  <h1>🏃 Nexis Escape FINAL</h1>
   <button onclick="createRoom()">ルーム作成</button>
 </div>
 
 <!-- 名前 -->
 <div id="nameUI" class="center" style="display:none;">
-  <h2>名前入力</h2>
+  <h2>名前</h2>
   <input id="nameInput">
   <button onclick="join()">参加</button>
 </div>
@@ -77,29 +37,30 @@ input{
 <!-- メイン -->
 <div id="main" style="display:none;">
 
-  <div class="card">
-    <div id="timer">--:--</div>
-  </div>
+<div class="card">
+  <div id="timer">--:--</div>
+</div>
 
-  <!-- ホストUI -->
-  <div id="hostUI" class="card" style="display:none;">
-    <h3>ホスト操作</h3>
-    <input id="timeInput" type="number" placeholder="秒">
-    <button onclick="startGame()">開始</button>
-    <div id="roomURL"></div>
-  </div>
+<div id="hostUI" class="card" style="display:none;">
+  <input id="timeInput" type="number" placeholder="秒">
+  <button onclick="startGame()">開始</button>
+  <div id="url"></div>
+</div>
 
-  <!-- 操作 -->
-  <div class="card">
-    <button onclick="capture()">確保</button>
-    <button onclick="revive()">復活</button>
-  </div>
+<div class="card">
+  <button onclick="reqCapture()">確保</button>
+  <button onclick="reqRevive()">復活</button>
+</div>
 
-  <!-- プレイヤー -->
-  <div class="card">
-    <h3>参加者</h3>
-    <div id="playerList"></div>
-  </div>
+<div class="card">
+  <h3>参加者</h3>
+  <div id="players"></div>
+</div>
+
+<div class="card">
+  <h3>ログ</h3>
+  <div id="log"></div>
+</div>
 
 </div>
 
@@ -110,26 +71,29 @@ const ably = new Ably.Realtime({
 });
 
 let room = new URLSearchParams(location.search).get("room");
-let isHost = false;
-let channel;
-let players = {};
-let state = {timer:0};
-let myId = Math.random().toString(36).slice(2);
+let isHost=false;
+let myId=Math.random().toString(36).slice(2);
 let myName="";
+let channel;
+
+// 👑 状態（ホストのみ更新）
+let state={
+  timer:0,
+  players:{},
+  log:[]
+};
 
 // ルーム作成
 function createRoom(){
-  room = Math.random().toString(36).substring(2,7).toUpperCase();
-  isHost = true;
-
-  let url = location.origin + location.pathname + "?room="+room;
+  room=Math.random().toString(36).substring(2,7).toUpperCase();
+  isHost=true;
   history.replaceState({}, "", "?room="+room);
 
   start.style.display="none";
   nameUI.style.display="flex";
 
   setTimeout(()=>{
-    roomURL.innerHTML="共有URL:<br>"+url;
+    url.innerText=location.href;
   },100);
 }
 
@@ -141,100 +105,122 @@ if(room){
 
 // 接続
 function connect(){
-  channel = ably.channels.get("room-"+room);
+  channel=ably.channels.get("final-"+room);
 
   channel.subscribe(msg=>{
-    let d = msg.data;
+    let d=msg.data;
 
-    if(d.type==="players"){
-      players = d.players;
-      updatePlayers();
+    // 👤 プレイヤー操作要求
+    if(isHost && d.type==="action"){
+      handleAction(d);
     }
 
+    // 📡 状態受信
     if(d.type==="state"){
-      state = d.state;
-      updateTimer();
+      state=d.state;
+      render();
     }
   });
 }
 
-// 名前決定
+// 参加
 function join(){
-  myName = nameInput.value || "名無し";
-
+  myName=nameInput.value||"名無し";
   connect();
-
-  players[myId] = {name:myName,alive:true};
-  sendPlayers();
 
   nameUI.style.display="none";
   main.style.display="block";
 
-  if(isHost){
-    hostUI.style.display="block";
-  }
+  if(isHost) hostUI.style.display="block";
+
+  // 参加要求
+  send({type:"action",action:"join",id:myId,name:myName});
 }
 
-// タイマー開始（ホストのみ）
+// 👑 ホスト処理
+function handleAction(d){
+
+  if(d.action==="join"){
+    state.players[d.id]={name:d.name,alive:true};
+    addLog("参加: "+d.name);
+  }
+
+  if(d.action==="capture"){
+    state.players[d.id].alive=false;
+    addLog("確保: "+state.players[d.id].name);
+  }
+
+  if(d.action==="revive"){
+    state.players[d.id].alive=true;
+    addLog("復活: "+state.players[d.id].name);
+  }
+
+  broadcast();
+}
+
+// タイマー開始
 function startGame(){
   if(!isHost) return;
 
-  state.timer = parseInt(timeInput.value) || 60;
+  state.timer=parseInt(timeInput.value)||60;
 
-  let interval = setInterval(()=>{
+  let int=setInterval(()=>{
     state.timer--;
-    sendState();
+    broadcast();
 
     if(state.timer<=0){
-      clearInterval(interval);
+      addLog("終了");
+      clearInterval(int);
     }
   },1000);
 }
 
-// UI更新
-function updateTimer(){
-  let m = Math.floor(state.timer/60);
-  let s = state.timer%60;
-  timer.innerText = m+":"+String(s).padStart(2,"0");
-}
+// 描画
+function render(){
+  let m=Math.floor(state.timer/60);
+  let s=state.timer%60;
+  timer.innerText=m+":"+String(s).padStart(2,"0");
 
-// プレイヤー表示
-function updatePlayers(){
-  playerList.innerHTML="";
-
-  for(let id in players){
-    let p = players[id];
-
-    let div = document.createElement("div");
-    div.className="player";
-
-    div.innerHTML = `
-      <span>${p.name}</span>
-      <span class="${p.alive?'alive':'dead'}">
-        ${p.alive?'逃走中':'確保'}
-      </span>
+  // プレイヤー
+  players.innerHTML="";
+  for(let id in state.players){
+    let p=state.players[id];
+    players.innerHTML+=`
+      <div class="player">
+        <span>${p.name}</span>
+        <span class="${p.alive?'alive':'dead'}">
+          ${p.alive?'逃走中':'確保'}
+        </span>
+      </div>
     `;
-
-    playerList.appendChild(div);
   }
+
+  // ログ
+  log.innerHTML=state.log.map(x=>"<div>"+x+"</div>").join("");
 }
 
-// 確保・復活
-function capture(){
-  players[myId].alive=false;
-  sendPlayers();
+// ログ追加
+function addLog(t){
+  state.log.push(t);
+  if(state.log.length>50) state.log.shift();
 }
-function revive(){
-  players[myId].alive=true;
-  sendPlayers();
+
+// 📡 配信
+function broadcast(){
+  channel.publish("msg",{type:"state",state});
+}
+
+// 👤 リクエスト
+function reqCapture(){
+  send({type:"action",action:"capture",id:myId});
+}
+function reqRevive(){
+  send({type:"action",action:"revive",id:myId});
 }
 
 // 送信
-function sendPlayers(){
-  channel.publish("msg",{type:"players",players});
-}
-function sendState(){
-  channel.publish("msg",{type:"state",state});
+function send(d){
+  channel.publish("msg",d);
 }
 </script>
 
